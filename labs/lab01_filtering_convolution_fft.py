@@ -26,7 +26,26 @@ def conv2d(image: npt.NDArray[np.generic], kernel: npt.NDArray[np.generic], bord
     Returns:
         `float32` array with the same shape as `image`.
     """
-    raise NotImplementedError("conv2d is not implemented")
+    img = np.asarray(image, dtype=np.float32)
+    ker = np.asarray(kernel, dtype=np.float32)
+    kH, kW = ker.shape
+    pH, pW = kH // 2, kW // 2
+    pad_mode_map = {"reflect": "reflect", "constant": "constant", "wrap": "wrap", "replicate": "edge"}
+    pad_mode = pad_mode_map[border]
+    if img.ndim == 2:
+        padded = np.pad(img, ((pH, pH), (pW, pW)), mode=pad_mode)
+        return signal.convolve2d(padded, ker, mode="valid", boundary="fill", fillvalue=0).astype(np.float32)
+    channels = [
+        signal.convolve2d(
+            np.pad(img[:, :, c], ((pH, pH), (pW, pW)), mode=pad_mode),
+            ker,
+            mode="valid",
+            boundary="fill",
+            fillvalue=0,
+        )
+        for c in range(img.shape[2])
+    ]
+    return np.stack(channels, axis=-1).astype(np.float32)
 
 
 def make_gaussian_kernel(ksize: int, sigma: float) -> npt.NDArray[np.float32]:
@@ -40,11 +59,18 @@ def make_gaussian_kernel(ksize: int, sigma: float) -> npt.NDArray[np.float32]:
     Returns:
         `(ksize, ksize)` `float32` kernel.
     """
-    raise NotImplementedError("make_gaussian_kernel is not implemented")
+    center = ksize // 2
+    x = np.arange(ksize, dtype=np.float32) - center
+    g1d = np.exp(-0.5 * (x / sigma) ** 2)
+    k = np.outer(g1d, g1d).astype(np.float32)
+    return k / k.sum()
 
 
 def _clip_to_dtype_range(x: np.ndarray, dtype: np.dtype) -> np.ndarray:
-    raise NotImplementedError("_clip_to_dtype_range is not implemented")
+    if np.issubdtype(dtype, np.integer):
+        info = np.iinfo(dtype)
+        return np.clip(x, info.min, info.max)
+    return x
 
 
 def apply_gaussian_blur(image: npt.NDArray[np.generic], ksize: int, sigma: float) -> np.ndarray:
@@ -59,7 +85,10 @@ def apply_gaussian_blur(image: npt.NDArray[np.generic], ksize: int, sigma: float
     Returns:
         Same shape/dtype as input.
     """
-    raise NotImplementedError("apply_gaussian_blur is not implemented")
+    in_dtype = np.asarray(image).dtype
+    k = make_gaussian_kernel(ksize, sigma)
+    filtered = conv2d(image, k)
+    return _clip_to_dtype_range(filtered, in_dtype).astype(in_dtype)
 
 
 def apply_box_blur(image: npt.NDArray[np.generic], ksize: int) -> np.ndarray:
@@ -73,7 +102,10 @@ def apply_box_blur(image: npt.NDArray[np.generic], ksize: int) -> np.ndarray:
     Returns:
         Same shape/dtype as input.
     """
-    raise NotImplementedError("apply_box_blur is not implemented")
+    in_dtype = np.asarray(image).dtype
+    k = np.ones((ksize, ksize), dtype=np.float32) / float(ksize * ksize)
+    filtered = conv2d(image, k)
+    return _clip_to_dtype_range(filtered, in_dtype).astype(in_dtype)
 
 
 def apply_median_blur(image: npt.NDArray[np.generic], ksize: int) -> np.ndarray:
@@ -87,7 +119,7 @@ def apply_median_blur(image: npt.NDArray[np.generic], ksize: int) -> np.ndarray:
     Returns:
         Same shape/dtype as input.
     """
-    raise NotImplementedError("apply_median_blur is not implemented")
+    return cv2.medianBlur(np.asarray(image), ksize)
 
 
 def add_salt_pepper_noise(
@@ -109,7 +141,26 @@ def add_salt_pepper_noise(
     Returns:
         Noised image with the same shape/dtype.
     """
-    raise NotImplementedError("add_salt_pepper_noise is not implemented")
+    img = np.asarray(image).copy()
+    rng = np.random.default_rng(seed)
+    h, w = img.shape[:2]
+    n_pixels = h * w
+    n_corrupt = int(amount * n_pixels)
+    if np.issubdtype(img.dtype, np.integer):
+        info = np.iinfo(img.dtype)
+        salt_val = int(info.max)
+        pepper_val = int(info.min)
+    else:
+        salt_val = 1.0
+        pepper_val = 0.0
+    all_idx = rng.permutation(n_pixels)
+    corrupt = all_idx[:n_corrupt]
+    n_salt = int(salt_vs_pepper * n_corrupt)
+    salt_idx = corrupt[:n_salt]
+    pepper_idx = corrupt[n_salt:]
+    img[salt_idx // w, salt_idx % w] = salt_val
+    img[pepper_idx // w, pepper_idx % w] = pepper_val
+    return img
 
 
 def add_gaussian_noise(image: npt.NDArray[np.generic], sigma: float, *, seed: int = 0) -> np.ndarray:
@@ -124,7 +175,11 @@ def add_gaussian_noise(image: npt.NDArray[np.generic], sigma: float, *, seed: in
     Returns:
         Noised image with the same shape/dtype.
     """
-    raise NotImplementedError("add_gaussian_noise is not implemented")
+    orig = np.asarray(image)
+    rng = np.random.default_rng(seed)
+    noise = rng.normal(0.0, sigma, size=orig.shape).astype(np.float32)
+    noisy = orig.astype(np.float32) + noise
+    return _clip_to_dtype_range(noisy, orig.dtype).astype(orig.dtype)
 
 
 def sobel_edges(image: npt.NDArray[np.generic], ksize: int = 3) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -138,7 +193,13 @@ def sobel_edges(image: npt.NDArray[np.generic], ksize: int = 3) -> tuple[np.ndar
         image: Input image (converted to grayscale internally).
         ksize: Positive odd Sobel size.
     """
-    raise NotImplementedError("sobel_edges is not implemented")
+    img = np.asarray(image)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    f = gray.astype(np.float32)
+    gx = cv2.Sobel(f, cv2.CV_32F, 1, 0, ksize=ksize)
+    gy = cv2.Sobel(f, cv2.CV_32F, 0, 1, ksize=ksize)
+    mag = np.sqrt(gx ** 2 + gy ** 2).astype(np.float32)
+    return gx, gy, mag
 
 
 def laplacian_edges(image: npt.NDArray[np.generic], ksize: int = 3) -> np.ndarray:
@@ -152,7 +213,11 @@ def laplacian_edges(image: npt.NDArray[np.generic], ksize: int = 3) -> np.ndarra
     Returns:
         `float32` array `(H, W)` (non-negative).
     """
-    raise NotImplementedError("laplacian_edges is not implemented")
+    img = np.asarray(image)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    f = gray.astype(np.float32)
+    lap = cv2.Laplacian(f, cv2.CV_32F, ksize=ksize)
+    return np.abs(lap).astype(np.float32)
 
 
 def fft2_image(image: npt.NDArray[np.generic]) -> np.ndarray:
@@ -165,7 +230,9 @@ def fft2_image(image: npt.NDArray[np.generic]) -> np.ndarray:
     Args:
         image: Input image (grayscale or color). Converted to grayscale internally.
     """
-    raise NotImplementedError("fft2_image is not implemented")
+    img = np.asarray(image)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    return cv2.dft(gray.astype(np.float32), flags=cv2.DFT_COMPLEX_OUTPUT)
 
 
 def fftshift2(spectrum: npt.NDArray[np.floating]) -> np.ndarray:
@@ -178,7 +245,9 @@ def fftshift2(spectrum: npt.NDArray[np.floating]) -> np.ndarray:
     Returns:
         Spectrum with quadrants swapped so that DC is at the center.
     """
-    raise NotImplementedError("fftshift2 is not implemented")
+    arr = np.asarray(spectrum)
+    h, w = arr.shape[:2]
+    return np.roll(np.roll(arr, h // 2, axis=0), w // 2, axis=1)
 
 
 def magnitude_spectrum(spectrum: npt.NDArray[np.floating], log_scale: bool = True) -> np.ndarray:
@@ -193,7 +262,11 @@ def magnitude_spectrum(spectrum: npt.NDArray[np.floating], log_scale: bool = Tru
     Returns:
         `float32` array of shape `(H, W)` with non-negative values.
     """
-    raise NotImplementedError("magnitude_spectrum is not implemented")
+    s = np.asarray(spectrum, dtype=np.float32)
+    mag = cv2.magnitude(s[..., 0], s[..., 1])
+    if log_scale:
+        mag = np.log1p(mag)
+    return mag.astype(np.float32)
 
 
 def ideal_low_pass_filter(shape: tuple[int, int] | tuple[int, int, int], cutoff_radius: float) -> np.ndarray:
@@ -208,7 +281,12 @@ def ideal_low_pass_filter(shape: tuple[int, int] | tuple[int, int, int], cutoff_
         A `float32` mask of shape `(H, W, 2)` suitable for elementwise multiplication
         with an OpenCV DFT spectrum.
     """
-    raise NotImplementedError("ideal_low_pass_filter is not implemented")
+    h, w = shape[0], shape[1]
+    cy, cx = h // 2, w // 2
+    y, x = np.ogrid[:h, :w]
+    dist = np.sqrt((y - cy) ** 2.0 + (x - cx) ** 2.0).astype(np.float32)
+    circle = (dist <= cutoff_radius).astype(np.float32)
+    return np.stack([circle, circle], axis=-1)
 
 
 def ideal_high_pass_filter(shape: tuple[int, int] | tuple[int, int, int], cutoff_radius: float) -> np.ndarray:
@@ -217,7 +295,7 @@ def ideal_high_pass_filter(shape: tuple[int, int] | tuple[int, int, int], cutoff
 
     This is defined as `1 - ideal_low_pass_filter(...)`.
     """
-    raise NotImplementedError("ideal_high_pass_filter is not implemented")
+    return (1.0 - ideal_low_pass_filter(shape, cutoff_radius)).astype(np.float32)
 
 
 def apply_frequency_filter(image: npt.NDArray[np.generic], filter_mask: npt.NDArray[np.floating]) -> np.ndarray:
@@ -234,7 +312,19 @@ def apply_frequency_filter(image: npt.NDArray[np.generic], filter_mask: npt.NDAr
     Returns:
         Filtered spatial-domain image as `float32` of shape `(H, W)`.
     """
-    raise NotImplementedError("apply_frequency_filter is not implemented")
+    img = np.asarray(image)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    f = gray.astype(np.float32)
+    dft = cv2.dft(f, flags=cv2.DFT_COMPLEX_OUTPUT)
+    dft_shift = fftshift2(dft)
+    mask = np.asarray(filter_mask, dtype=np.float32)
+    if mask.ndim == 2:
+        mask = np.stack([mask, mask], axis=-1)
+    filtered = dft_shift * mask
+    h, w = filtered.shape[:2]
+    unshifted = np.roll(np.roll(filtered, -(h // 2), axis=0), -(w // 2), axis=1)
+    result = cv2.idft(unshifted, flags=cv2.DFT_SCALE | cv2.DFT_REAL_OUTPUT)
+    return result.astype(np.float32)
 
 
 def normalize_to_uint8(x: npt.ArrayLike) -> npt.NDArray[np.uint8]:
@@ -247,7 +337,12 @@ def normalize_to_uint8(x: npt.ArrayLike) -> npt.NDArray[np.uint8]:
     Returns:
         2D/3D array (same shape as input) scaled to `uint8`.
     """
-    raise NotImplementedError("normalize_to_uint8 is not implemented")
+    arr = np.asarray(x, dtype=np.float64)
+    mn, mx = float(np.min(arr)), float(np.max(arr))
+    if mx <= mn:
+        return np.zeros_like(arr, dtype=np.uint8)
+    scaled = (arr - mn) * (255.0 / (mx - mn))
+    return np.clip(np.round(scaled), 0, 255).astype(np.uint8)
 
 
 def main() -> int:
