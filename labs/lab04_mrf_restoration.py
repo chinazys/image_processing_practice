@@ -35,7 +35,22 @@ def mrf_energy(
     Returns:
         Scalar energy.
     """
-    raise NotImplementedError("mrf_energy is not implemented")
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    data_term = float(np.sum((x - y) ** 2))
+
+    dh = x[:, :-1] - x[:, 1:]
+    dv = x[:-1, :] - x[1:, :]
+
+    def _rho(d: np.ndarray) -> np.ndarray:
+        if penalty == "quadratic":
+            return d ** 2
+        delta = float(huber_delta)
+        abs_d = np.abs(d)
+        return np.where(abs_d <= delta, 0.5 * d ** 2, delta * (abs_d - 0.5 * delta))
+
+    smooth_term = float(np.sum(_rho(dh)) + np.sum(_rho(dv)))
+    return data_term + lambda_smooth * smooth_term
 
 
 def mrf_denoise(
@@ -60,12 +75,43 @@ def mrf_denoise(
     Returns:
         Restored image with the same shape as `y`.
     """
-    raise NotImplementedError("mrf_denoise is not implemented")
+    y = np.asarray(y, dtype=np.float64)
+    x = y.copy()
+
+    def _drho(d: np.ndarray) -> np.ndarray:
+        if penalty == "quadratic":
+            return 2.0 * d
+        delta = float(huber_delta)
+        return np.where(np.abs(d) <= delta, d, delta * np.sign(d))
+
+    for _ in range(num_iters):
+        grad = 2.0 * (x - y)
+
+        dh = x[:, :-1] - x[:, 1:]
+        rp_h = _drho(dh)
+        grad_s = np.zeros_like(x)
+        grad_s[:, :-1] += rp_h
+        grad_s[:, 1:]  -= rp_h
+
+        dv = x[:-1, :] - x[1:, :]
+        rp_v = _drho(dv)
+        grad_s[:-1, :] += rp_v
+        grad_s[1:, :]  -= rp_v
+
+        grad = grad + lambda_smooth * grad_s
+        x = x - step * grad
+
+    return x.astype(np.float32)
 
 
 def normalize_to_uint8(x: np.ndarray) -> np.ndarray:
     """Min-max normalize array to [0,255] uint8 for visualization."""
-    raise NotImplementedError("normalize_to_uint8 is not implemented")
+    arr = np.asarray(x, dtype=np.float64)
+    mn, mx = float(np.min(arr)), float(np.max(arr))
+    if mx <= mn:
+        return np.zeros_like(arr, dtype=np.uint8)
+    scaled = (arr - mn) * (255.0 / (mx - mn))
+    return np.clip(np.round(scaled), 0, 255).astype(np.uint8)
 
 
 def main() -> int:
