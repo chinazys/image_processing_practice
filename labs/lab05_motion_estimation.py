@@ -26,7 +26,23 @@ def optical_flow_farneback(prev_gray: np.ndarray, next_gray: np.ndarray, **param
     Returns:
         Dense flow field `(H, W, 2)` as float array.
     """
-    raise NotImplementedError("optical_flow_farneback is not implemented")
+    p = np.asarray(prev_gray)
+    n = np.asarray(next_gray)
+    if p.dtype != np.uint8:
+        p = np.clip(p, 0, 255).astype(np.uint8)
+    if n.dtype != np.uint8:
+        n = np.clip(n, 0, 255).astype(np.uint8)
+    pyr_scale  = float(params.get("pyr_scale",  0.5))
+    levels     = int(params.get("levels",     3))
+    winsize    = int(params.get("winsize",    15))
+    iterations = int(params.get("iterations", 3))
+    poly_n     = int(params.get("poly_n",     5))
+    poly_sigma = float(params.get("poly_sigma", 1.2))
+    flags      = int(params.get("flags",      0))
+    flow = cv2.calcOpticalFlowFarneback(
+        p, n, None, pyr_scale, levels, winsize, iterations, poly_n, poly_sigma, flags
+    )
+    return flow.astype(np.float32)
 
 
 def flow_to_hsv(flow_xy: np.ndarray) -> np.ndarray:
@@ -39,7 +55,18 @@ def flow_to_hsv(flow_xy: np.ndarray) -> np.ndarray:
     Returns:
         `uint8` BGR image `(H,W,3)` suitable for `cv2.imwrite`.
     """
-    raise NotImplementedError("flow_to_hsv is not implemented")
+    flow = np.asarray(flow_xy, dtype=np.float32)
+    h, w = flow.shape[:2]
+    
+    mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+    hsv = np.zeros((h, w, 3), dtype=np.uint8)
+    
+    hsv[..., 0] = (ang * 180.0 / np.pi / 2.0).astype(np.uint8)
+    hsv[..., 1] = 255
+    
+    cv2.normalize(mag, mag, 0, 255, cv2.NORM_MINMAX)
+    hsv[..., 2] = mag.astype(np.uint8)
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
 
 def main() -> int:
